@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>極速影音共享平台</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans">
+
+  <script>
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwC62tN5dCtUh7KYhyBWLEQmU1JhK77wKNWnG-Ea1s_ezm5QQO-09qdea0DKyDPNs_IMA/exec";
+    const GOOGLE_CLIENT_ID = "355976786822-6omdsj62tm1usst4f6t9ju1h2kksi6tq.apps.googleusercontent.com"; // 已為您填上 image_3fb260.png 中的用戶端 ID
+    
+    // 全域變數：儲存從試算表 folders 工作表抓出來的硬碟池
+    let DRIVE_POOLS = []; 
+  </script>
+
+  <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex justify-between items-center">
+    <span class="text-2xl font-black text-indigo-400 tracking-wider">⚡ FLIX DRIVE</span>
+    <div id="loginSection">
+      <div id="g_id_onload"></div>
+      <div class="g_id_signin" data-type="standard"></div>
+    </div>
+    <div id="userSection" class="hidden flex items-center gap-4">
+      <span id="userEmailLabel" class="text-sm text-gray-300"></span>
+      <span id="userRoleBadge" class="px-2 py-0.5 text-xs rounded bg-indigo-600 font-bold"></span>
+      <button onclick="logout()" class="text-xs text-red-400 hover:underline">登出</button>
+    </div>
+  </nav>
+
+  <main class="max-w-7xl mx-auto p-6">
+    <div id="unauthorizedBox" class="hidden bg-yellow-950 border border-yellow-800 text-yellow-200 p-4 rounded-lg mb-6">
+      ⚠️ 您的帳號已註冊成功！系統目前為「待審核」狀態，請聯絡管理員為您開通權限。
+    </div>
+
+    <div id="mainDashboard" class="hidden space-y-8">
+      
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 col-span-1">
+          <h3 class="text-lg font-bold mb-3">🔍 快速搜尋</h3>
+          <input type="text" id="searchInput" oninput="filterVideos()" placeholder="輸入關鍵字搜尋影片..." class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </div>
+
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 col-span-2">
+          <h3 class="text-lg font-bold mb-1">📤 上傳影片 (至暫存硬碟)</h3>
+          <p class="text-xs text-gray-400 mb-4">上傳大檔時請保持瀏覽器開啟。上傳後需待管理員審核方可上架。</p>
+          <div class="flex items-center gap-4">
+            <input type="file" id="videoFileInput" accept="video/*" onchange="handleFileSelect()" class="hidden">
+            <button onclick="document.getElementById('videoFileInput').click()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-semibold text-sm transition">選擇影片</button>
+            <span id="selectedFileName" class="text-sm text-gray-400">尚未選擇檔案</span>
+            <button id="startUploadBtn" onclick="startDirectUpload()" class="hidden bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-lg font-semibold text-sm transition">開始高速上傳</button>
+          </div>
+          <div id="progressBar" class="hidden mt-4">
+            <div class="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+              <div id="progressFill" class="bg-indigo-500 h-full w-0 transition-all duration-150"></div>
+            </div>
+            <p id="uploadStatus" class="text-xs text-gray-400 mt-2">準備上傳...</p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">🎬 影片展示首頁</h2>
+        <div id="videoGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          </div>
+      </div>
+
+      <div id="adminPanel" class="hidden bg-gray-800 p-6 rounded-xl border border-red-900/50 space-y-6">
+        <h2 class="text-xl font-black text-red-400 border-b border-gray-700 pb-3">👑 管理員控制台</h2>
+        
+        <div class="bg-gray-900 p-5 rounded-lg border border-gray-700 space-y-4">
+          <div class="flex justify-between items-center">
+            <h3 class="font-bold text-lg text-indigo-400 flex items-center gap-2">💿 儲存庫硬碟管理 (直接讀寫試算表 `folders` 工作表)</h3>
+            <button onclick="addDrivePoolRow()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-2.5 py-1.5 rounded font-bold">+ 新增硬碟 ID</button>
+          </div>
+          <p class="text-xs text-gray-400">此列表直接與試算表中的 「folders」 分頁連動。審核通過時，影片會自動分流至此處其中一個 ACTIVE 狀態且未滿 14GB 的硬碟中。</p>
+          
+          <div id="drivePoolsContainer" class="space-y-2">
+            </div>
+
+          <div class="pt-2 flex justify-end">
+            <button onclick="saveSystemFolders()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm px-6 py-2 rounded-lg font-bold transition shadow-lg">💾 儲存並同步至試算表 folders</button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+            <h3 class="font-bold text-gray-200 mb-3">⏳ 待審核影片暫存區</h3>
+            <div id="pendingVideoList" class="space-y-3 max-h-60 overflow-y-auto pr-2">
+              <p class="text-sm text-gray-500">目前無待審核影片。</p>
+            </div>
+          </div>
+
+          <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+            <h3 class="font-bold text-gray-200 mb-3">👥 使用者權限管理 (可升格管理員)</h3>
+            <div id="userManagementList" class="space-y-3 max-h-60 overflow-y-auto pr-2">
+              <p class="text-sm text-gray-500">載入中...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="videoModal" class="fixed inset-0 bg-black/90 hidden z-50 flex items-center justify-center p-4">
+    <div class="relative w-full max-w-4xl bg-gray-900 rounded-xl overflow-hidden border border-gray-700">
+      <button onclick="closePlayer()" class="absolute top-4 right-4 text-white hover:text-gray-300 z-10 text-2xl font-bold">×</button>
+      <div class="aspect-video w-full">
+        <iframe id="videoPlayer" class="w-full h-full" src="" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+      </div>
+      <div class="p-4 bg-gray-800">
+        <h3 id="modalVideoTitle" class="text-lg font-bold">影片標題</h3>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentUserEmail = "";
+    let currentUserRole = "";
+    let allVideos = [];
+    let selectedFile = null;
+
+    // 網頁載入初始化 Google 登入
+    window.onload = function () {
+      if (typeof google !== 'undefined') {
+        google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleCredentialResponse
+        });
+        google.accounts.id.renderButton(
+          document.querySelector(".g_id_signin"),
+          { theme: "outline", size: "large" }
+        );
+      }
+    };
+
+    function parseJwt(token) {
+      try { return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } 
+      catch (e) { return null; }
+    }
+
+    async function handleCredentialResponse(response) {
+      const payload = parseJwt(response.credential);
+      if (!payload) return alert("登入失敗");
+      
+      currentUserEmail = payload.email;
+      document.getElementById('loginSection').classList.add('hidden');
+      
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "loginOrRegister", userEmail: currentUserEmail })
+      });
+      const result = await res.json();
+      
+      if (result.success) {
+        currentUserRole = result.role;
+        document.getElementById('userEmailLabel').innerText = currentUserEmail;
+        document.getElementById('userRoleBadge').innerText = result.role;
+        document.getElementById('userSection').classList.remove('hidden');
+        
+        if (result.status === "APPROVED" || result.role === "ADMIN") {
+          document.getElementById('mainDashboard').classList.remove('hidden');
+          document.getElementById('unauthorizedBox').classList.add('hidden');
+          if (result.role === "ADMIN") {
+            document.getElementById('adminPanel').classList.remove('hidden');
+            await loadSystemFolders(); // 載入系統硬碟配置
+            loadAdminData();
+          }
+          loadFormalVideos();
+        } else {
+          document.getElementById('unauthorizedBox').classList.remove('hidden');
+        }
+      }
+    }
+
+    function logout() { location.reload(); }
+
+    // --- 1. 讀取並渲染 folders 設定面板 ---
+    async function loadSystemFolders() {
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "adminGetFolders", userEmail: currentUserEmail })
+      });
+      const result = await res.json();
+      if (result.success) {
+        DRIVE_POOLS = result.folders || [];
+        
+        // 渲染硬碟池輸入列
+        const container = document.getElementById('drivePoolsContainer');
+        container.innerHTML = "";
+        if (DRIVE_POOLS.length === 0) {
+          addDrivePoolRow(); // 預設一列空的
+        } else {
+          DRIVE_POOLS.forEach(folder => addDrivePoolRow(folder.id, folder.status));
+        }
+      }
+    }
+
+    // 動態增加硬碟輸入列
+    function addDrivePoolRow(id = "", status = "ACTIVE") {
+      const container = document.getElementById('drivePoolsContainer');
+      const div = document.createElement('div');
+      div.className = "flex gap-2 items-center drive-pool-row bg-gray-800 p-2 rounded border border-gray-700";
+      div.innerHTML = `
+        <input type="text" placeholder="請貼上 Google 雲端硬碟資料夾 ID" value="${id}" class="pool-id flex-1 bg-gray-900 border border-gray-700 rounded p-1.5 text-sm text-white focus:outline-none">
+        <select class="pool-status bg-gray-900 border border-gray-700 rounded p-1.5 text-sm text-white focus:outline-none">
+          <option value="ACTIVE" ${status === 'ACTIVE' ? 'selected' : ''}>ACTIVE (啟用)</option>
+          <option value="DISABLED" ${status === 'DISABLED' ? 'selected' : ''}>DISABLED (禁用)</option>
+        </select>
+        <button onclick="this.parentElement.remove()" class="text-red-400 hover:text-red-300 px-2 font-bold text-sm">移除</button>
+      `;
+      container.appendChild(div);
+    }
+
+    // 儲存硬碟 ID 配置回試算表 folders
+    async function saveSystemFolders() {
+      const rows = document.querySelectorAll('.drive-pool-row');
+      const updatedFolders = [];
+      
+      rows.forEach(row => {
+        const id = row.querySelector('.pool-id').value.trim();
+        const status = row.querySelector('.pool-status').value;
+        if (id) {
+          updatedFolders.push({ id, status });
+        }
+      });
+
+      if (updatedFolders.length === 0) return alert("請至少配置一個影片儲存庫硬碟 ID！");
+
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "adminSaveFolders",
+          userEmail: currentUserEmail,
+          folders: updatedFolders
+        })
+      });
+      const result = await res.json();
+      if (result.success) {
+        alert("🎉 設定成功！硬碟資料夾 ID 已直接寫入試算表中的 folders 工作表！");
+        DRIVE_POOLS = updatedFolders; // 同步更新本機快取
+      } else {
+        alert("儲存失敗：" + result.error);
+      }
+    }
+
+    // --- 2. 影片展示與搜尋 ---
+    async function loadFormalVideos() {
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "getVideoList", userEmail: currentUserEmail })
+      });
+      const result = await res.json();
+      if (result.success) {
+        allVideos = result.videos;
+        renderVideos(allVideos);
+      }
+    }
+
+    function renderVideos(videos) {
+      const grid = document.getElementById('videoGrid');
+      grid.innerHTML = "";
+      if (videos.length === 0) {
+        grid.innerHTML = `<p class="col-span-full text-center text-gray-500 py-12">目前沒有影片可供觀看。</p>`;
+        return;
+      }
+      videos.forEach(v => {
+        const card = document.createElement('div');
+        card.className = "bg-gray-800 rounded-xl overflow-hidden border border-gray-700 hover:border-indigo-500 transition cursor-pointer group";
+        card.onclick = () => playVideo(v.id, v.title);
+        card.innerHTML = `
+          <div class="aspect-video bg-gray-950 flex items-center justify-center relative">
+            <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+              <span class="bg-indigo-600 text-white px-4 py-2 rounded-full font-bold text-sm">▶ 立即播放</span>
+            </div>
+          </div>
+          <div class="p-4 flex justify-between items-start gap-2">
+            <div>
+              <h4 class="font-bold text-sm text-gray-100 line-clamp-2">${v.title}</h4>
+              <p class="text-xs text-gray-400 mt-1">上傳者: ${v.owner.split('@')[0]}</p>
+            </div>
+            ${(v.owner.toLowerCase() === currentUserEmail.toLowerCase() || currentUserRole === 'ADMIN') ? 
+              `<button onclick="event.stopPropagation(); deleteVideo('${v.id}')" class="text-red-400 hover:text-red-300 text-xs font-bold">刪除</button>` : ''}
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function filterVideos() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const filtered = allVideos.filter(v => v.title.toLowerCase().includes(query));
+      renderVideos(filtered);
+    }
+
+    function playVideo(id, title) {
+      const modal = document.getElementById('videoModal');
+      const player = document.getElementById('videoPlayer');
+      document.getElementById('modalVideoTitle').innerText = title;
+      player.src = `https://drive.google.com/file/d/${id}/preview?autoplay=1`;
+      modal.classList.remove('hidden');
+    }
+
+    function closePlayer() {
+      const modal = document.getElementById('videoModal');
+      const player = document.getElementById('videoPlayer');
+      player.src = "";
+      modal.classList.add('hidden');
+    }
+
+    async function deleteVideo(id) {
+      if (!confirm("確定要刪除這部影片嗎？")) return;
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "deleteVideo", userEmail: currentUserEmail, videoId: id })
+      });
+      const result = await res.json();
+      if (result.success) {
+        alert("刪除成功！");
+        loadFormalVideos();
+        if (currentUserRole === "ADMIN") loadAdminData();
+      } else {
+        alert("刪除失敗：" + result.error);
+      }
+    }
+
+    // --- 3. 大檔案高速直傳 (Resumable Upload) ---
+    function handleFileSelect() {
+      const input = document.getElementById('videoFileInput');
+      if (input.files.length > 0) {
+        selectedFile = input.files[0];
+        document.getElementById('selectedFileName').innerText = `已選取：${selectedFile.name} (${formatBytes(selectedFile.size)})`;
+        document.getElementById('startUploadBtn').style.display = 'inline-block';
+      }
+    }
+
+    async function startDirectUpload() {
+      if (!selectedFile) return;
+      const btn = document.getElementById('startUploadBtn');
+      btn.style.display = 'none';
+      document.getElementById('progressBar').style.display = 'block';
+      const statusEl = document.getElementById('uploadStatus');
+      
+      try {
+        statusEl.innerText = "正在取得安全上傳金鑰...";
+        
+        const tokenRes = await fetch(GAS_API_URL, {
+          method: "POST",
+          body: JSON.stringify({ action: "getUploadToken", userEmail: currentUserEmail })
+        });
+        const tokenResult = await tokenRes.json();
+        if (!tokenResult.success) throw new Error(tokenResult.error);
+        
+        const authToken = tokenResult.token;
+        const tempFolderId = tokenResult.folderId; // 上傳至 folders 裡的第一顆硬碟作為暫存
+        
+        statusEl.innerText = "正在建立暫存高速通道...";
+        const metadata = { name: selectedFile.name, mimeType: selectedFile.type, parents: [tempFolderId] };
+        
+        const initDriveRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json; charset=UTF-8' },
+          body: JSON.stringify(metadata)
+        });
+        
+        const uploadUrl = initDriveRes.headers.get('Location');
+        if (!uploadUrl) throw new Error("通道建立失敗，請確認儲存庫硬碟 ID 是否正確");
+
+        statusEl.innerText = "開始高速傳輸至雲端硬碟...";
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        
+        xhr.upload.onprogress = function(e) {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            document.getElementById('progressFill').style.width = percent + '%';
+            statusEl.innerText = `傳輸中：${percent}% (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`;
+          }
+        };
+
+        xhr.onload = async function() {
+          if (xhr.status === 200 || xhr.status === 201) {
+            const response = JSON.parse(xhr.responseText);
+            statusEl.innerText = "🎉 傳輸成功！登記到試算表...";
+            
+            const regRes = await fetch(GAS_API_URL, {
+              method: "POST",
+              body: JSON.stringify({ action: "registerUploadedVideo", userEmail: currentUserEmail, videoId: response.id, videoName: response.name })
+            });
+            const regResult = await regRes.json();
+            
+            if(regResult.success) {
+               statusEl.innerText = "🎉 登記成功！等待管理員核准上架。";
+               selectedFile = null;
+               document.getElementById('progressBar').style.display = 'none';
+               loadFormalVideos();
+               if(currentUserRole === "ADMIN") loadAdminData();
+            } else {
+               throw new Error(regResult.error);
+            }
+          } else {
+            throw new Error("傳輸失敗，代碼：" + xhr.status);
+          }
+        };
+        xhr.send(selectedFile);
+
+      } catch (err) {
+        statusEl.innerText = "❌ 失敗：" + err.message;
+        btn.style.display = 'inline-block';
+      }
+    }
+
+    // --- 👑 4. 管理員核心審核 logic (動態向試算表撈取 ACTIVE 硬碟並檢查容量分流) ---
+    async function loadAdminData() {
+      // 載入待審核影片
+      const vRes = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "adminGetPendingVideos", userEmail: currentUserEmail })
+      });
+      const vResult = await vRes.json();
+      const pList = document.getElementById('pendingVideoList');
+      pList.innerHTML = "";
+      if (vResult.success && vResult.videos.length > 0) {
+        vResult.videos.forEach(v => {
+          const div = document.createElement('div');
+          div.className = "flex items-center justify-between bg-gray-800 p-3 rounded border border-gray-700";
+          div.innerHTML = `
+            <div class="flex-1 min-w-0 pr-2">
+              <p class="text-sm font-semibold truncate text-gray-200">${v.title}</p>
+              <p class="text-xs text-gray-400">上傳: ${v.owner}</p>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="approveVideo('${v.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1.5 rounded font-bold transition">核准</button>
+              <button onclick="deleteVideo('${v.id}')" class="bg-red-600 hover:bg-red-500 text-white text-xs px-3 py-1.5 rounded font-bold transition">駁回</button>
+            </div>
+          `;
+          pList.appendChild(div);
+        });
+      } else {
+        pList.innerHTML = `<p class="text-xs text-gray-500">目前無待審核影片。</p>`;
+      }
+
+      // 載入使用者管理清單
+      const uRes = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "adminGetUsers", userEmail: currentUserEmail })
+      });
+      const uResult = await uRes.json();
+      const uList = document.getElementById('userManagementList');
+      uList.innerHTML = "";
+      if (uResult.success) {
+        uResult.users.forEach(u => {
+          const div = document.createElement('div');
+          div.className = "flex items-center justify-between bg-gray-800 p-3 rounded border border-gray-700";
+          div.innerHTML = `
+            <div>
+              <p class="text-sm font-semibold text-gray-200">${u.email}</p>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 font-bold">${u.status}</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-300 font-bold ml-1">${u.role}</span>
+            </div>
+            <div class="flex gap-1.5">
+              ${u.status === "PENDING" ? `<button onclick="updateUser('${u.email}', 'APPROVED', null)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-2 py-1 rounded">通過審核</button>` : ''}
+              ${u.role === "USER" ? 
+                `<button onclick="updateUser('${u.email}', null, 'ADMIN')" class="bg-purple-600 hover:bg-purple-500 text-white text-xs px-2 py-1 rounded font-bold">升為管理員</button>` : 
+                `<button onclick="updateUser('${u.email}', null, 'USER')" class="bg-gray-600 hover:bg-gray-500 text-white text-xs px-2 py-1 rounded">降為用戶</button>`
+              }
+              <button onclick="updateUser('${u.email}', 'BLOCKED', 'USER')" class="bg-red-900 hover:bg-red-800 text-red-200 text-xs px-2 py-1 rounded">封鎖</button>
+            </div>
+          `;
+          uList.appendChild(div);
+        });
+      }
+    }
+
+    async function updateUser(targetEmail, status, role) {
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        body: JSON.stringify({ action: "adminUpdateUser", userEmail: currentUserEmail, targetEmail, newStatus: status, newRole: role })
+      });
+      const result = await res.json();
+      if (result.success) {
+        alert("使用者權限更新成功！");
+        loadAdminData();
+      }
+    }
+
+    // 審核影片：向試算表請求 ACTIVE 硬碟，並自動進行容量檢測與分流
+    async function approveVideo(videoId) {
+      // 過濾出目前前端已載入且狀態為 ACTIVE 的硬碟池
+      const activePools = DRIVE_POOLS.filter(p => p.status === "ACTIVE");
+      
+      if (activePools.length === 0) {
+        alert("❌ 目前沒有啟用的硬碟（ACTIVE）！請先在下方「儲存庫硬碟管理」面板新增、啟用並儲存！");
+        return;
+      }
+      
+      try {
+        const tokenRes = await fetch(GAS_API_URL, {
+          method: "POST",
+          body: JSON.stringify({ action: "getUploadToken", userEmail: currentUserEmail })
+        });
+        const tokenResult = await tokenRes.json();
+        const authToken = tokenResult.token;
+
+        let selectedTargetFolder = null;
+
+        // 依序檢查有啟用的硬碟空間
+        for (let pool of activePools) {
+          const sizeCheckRes = await fetch(`https://www.googleapis.com/drive/v3/files?q='${pool.id}'+in+parents+and+trashed=false&fields=files(size)`, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+          });
+          const sizeData = await sizeCheckRes.json();
+          
+          let currentFolderSize = 0;
+          if (sizeData.files) {
+            currentFolderSize = sizeData.files.reduce((acc, file) => acc + (parseInt(file.size) || 0), 0);
+          }
+
+          // 限制為 14GB (換算：15032385536 Bytes)
+          if (currentFolderSize < 15032385536) {
+            selectedTargetFolder = pool;
+            break; 
+          } else {
+            console.warn(`硬碟 ID: ${pool.id} 已滿，前往下一個儲存庫...`);
+          }
+        }
+
+        if (!selectedTargetFolder) {
+          alert("❌ 所有已啟用的硬碟皆已達到 14GB 上限！請立即於下方的配置面板新增「全新硬碟 ID」並儲存！");
+          return;
+        }
+
+        if (!confirm(`自動檢測分流：此影片空間符合，將移至硬碟「ID: ${selectedTargetFolder.id}」，確定核准嗎？`)) return;
+
+        const res = await fetch(GAS_API_URL, {
+          method: "POST",
+          body: JSON.stringify({ 
+            action: "adminApproveVideo", 
+            userEmail: currentUserEmail, 
+            videoId: videoId, 
+            targetFolderId: selectedTargetFolder.id 
+          })
+        });
+        const result = await res.json();
+        if (result.success) {
+          alert(`🎉 審核與分流完成！影片已儲存至硬碟：${selectedTargetFolder.id}`);
+          loadAdminData();
+          loadFormalVideos();
+        } else {
+          alert("審核失敗：" + result.error);
+        }
+      } catch (e) {
+        alert("審核發生異常：" + e.message);
+      }
+    }
+
+    function formatBytes(bytes, decimals = 2) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const dm = decimals < 0 ? 0 : decimals;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+  </script>
+</body>
+</html>
